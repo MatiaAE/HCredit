@@ -91,15 +91,18 @@ modeDatatst.tst <- imputationFunction(imputeToData = test, imputeFromData = test
 weights <- read.csv('/home/matia_alexander/data/modified/Training_Weight_V1.csv') %>% select(-X)
 print("Weights loaded")
 
-train <- cbind(train, meanDatatr, medianDatatr, modeDatatr,
-	       meanDatatr.tst, medianDatatr.tst, modeDatatr.tst) %>% 
-		left_join(weights, by = "SK_ID_CURR")
+#train <- cbind(train, meanDatatr, medianDatatr, modeDatatr,
+#	       meanDatatr.tst, medianDatatr.tst, modeDatatr.tst) %>% 
+#		left_join(weights, by = "SK_ID_CURR")
+
+train = train %>% 
+	left_join(weights, by = "SK_ID_CURR")
 
 rm(meanDatatr, medianDatatr, modeDatatr, weights,
 	       meanDatatr.tst, medianDatatr.tst, modeDatatr.tst)
 
-test <- cbind(test, meanDatatst, medianDatatst, modeDatatst,
-	       meanDatatst.tst, medianDatatst.tst, modeDatatst.tst) 
+#test <- cbind(test, meanDatatst, medianDatatst, modeDatatst,
+#	       meanDatatst.tst, medianDatatst.tst, modeDatatst.tst) 
 
 rm(meanDatatst, medianDatatst, modeDatatst,
     meanDatatst.tst, medianDatatst.tst, modeDatatst.tst)
@@ -118,7 +121,7 @@ if(sum(c("TARGET", "fold", "Weights") %in% train_cols) != 3){
 	stop("train data missing one of: TARGET, fold, Weights")
 }
 
-train_cols = train_cols[!train_cols %in% c("TARGET","fold","Weights")]
+train_cols = train_cols[!(train_cols %in% c("TARGET","fold","Weights"))]
 train_cols_not_test = train_cols[!(train_cols %in% test_cols)]
 test_cols_not_train = test_cols[!(test_cols %in% train_cols)]
 
@@ -149,13 +152,13 @@ count_categorical <- function(dt, field, suffix){
   
 }
 
-count_categorical_list <- function(dt, field_list){
+count_categorical_list <- function(dt, field_list, suffix){
   #Returns a list of frames resulting from count_categorical
   frames = list()
   
   for(i in field_list){
     print(paste0("Counting field: ", i))
-    sfx = paste0("_count_", i)
+    sfx = paste0("_count_", i, suffix)
     frames[[i]] = count_categorical(dt, i, sfx)
   }
   
@@ -218,7 +221,7 @@ bureau_categoricals = c("CREDIT_ACTIVE",
                         "CREDIT_CURRENCY",
                         "CREDIT_TYPE")
 
-bureau_categorical_count = count_categorical_list(bureau, bureau_categoricals)
+bureau_categorical_count = count_categorical_list(bureau, bureau_categoricals,"_bureau")
 
 bureau_features = c(bureau_features, bureau_categorical_count)
 
@@ -244,7 +247,7 @@ bureau_features = c(bureau_features, bureau_numerical_stats)
 
 
 #Get average time between credits
-bureau_days_credit_avg = 
+days_credit_avg_bureau = 
   bureau %>% 
   select(SK_ID_CURR, DAYS_CREDIT) %>% 
   arrange(SK_ID_CURR, desc(DAYS_CREDIT)) %>% 
@@ -258,56 +261,56 @@ bureau_days_credit_avg =
   select(SK_ID_CURR, Avg_Time_Btwn_Credit, SDev_Time_Btwn_Cred) %>% 
   distinct()
 
-bureau_features = c(bureau_features, list(days_credit_avg = bureau_days_credit_avg))
+bureau_features = c(bureau_features, list(days_credit_avg = days_credit_avg_bureau))
 
 
 #Get count of past credits
-bureau_prev_credits = 
+prev_credits_bureau = 
   bureau %>% 
   filter(DAYS_CREDIT_ENDDATE < 0) %>% 
   group_by(SK_ID_CURR) %>% 
   summarise(Bureau_Past_Credit_Count = n())
 
-bureau_features = c(bureau_features, list(prev_credits = bureau_prev_credits))
+bureau_features = c(bureau_features, list(prev_credits = prev_credits_bureau))
 
 
 #Get count of open credits
-bureau_curr_credits = 
+curr_credits_bureau = 
   bureau %>% 
   filter(DAYS_CREDIT_ENDDATE >= 0) %>% 
   group_by(SK_ID_CURR) %>% 
   summarise(Bureau_Current_Credit_Count = n())
 
-bureau_features = c(bureau_features, list(curr_credits = bureau_curr_credits))
+bureau_features = c(bureau_features, list(curr_credits = curr_credits_bureau))
 
 
 #Get amounts overdue based on DAYS_CREDIT_UPDATE buckets
 #if overdue amount reported years before current application then likely less relevant
 
-bureau_amt_overdue_buckets = 
+amt_overdue_buckets_bureau = 
   bureau %>% 
   select(SK_ID_CURR, DAYS_CREDIT_UPDATE, AMT_CREDIT_SUM_OVERDUE) %>% 
   filter(AMT_CREDIT_SUM_OVERDUE > 0) %>% 
   mutate(Time_Bucket = case_when(
-    DAYS_CREDIT_UPDATE >= -90 ~ "1Q",
+    DAYS_CREDIT_UPDATE >= -90 ~ "AMT_CREDIT_OVERDUE_1Q_bureau",
     
     DAYS_CREDIT_UPDATE < -90 &
-      DAYS_CREDIT_UPDATE >= -180 ~ "2Q",
+      DAYS_CREDIT_UPDATE >= -180 ~ "AMT_CREDIT_OVERDUE_2Q_bureau",
     
     DAYS_CREDIT_UPDATE < -180 &
-      DAYS_CREDIT_UPDATE >= -270 ~ "3Q",
+      DAYS_CREDIT_UPDATE >= -270 ~ "AMT_CREDIT_OVERDUE_3Q_bureau",
     
     DAYS_CREDIT_UPDATE < -270 &
-      DAYS_CREDIT_UPDATE >= -360 ~ "4Q",
+      DAYS_CREDIT_UPDATE >= -360 ~ "AMT_CREDIT_OVERDUE_4Q_bureau",
     
-    TRUE ~ "GT1Y"
+    TRUE ~ "AMT_CREDIT_OVERDUE_GT1Y_bureau"
     
   )) %>% 
   group_by(SK_ID_CURR, Time_Bucket) %>% 
   summarise(AMT_CREDIT_OVERDUE = sum(AMT_CREDIT_SUM_OVERDUE)) %>% 
   dcast(SK_ID_CURR ~ Time_Bucket, fill = 0, value.var = "AMT_CREDIT_OVERDUE")
 
-bureau_features = c(bureau_features, list(amt_od_buckets = bureau_amt_overdue_buckets))
+bureau_features = c(bureau_features, list(amt_od_buckets = amt_overdue_buckets_bureau))
 
 
 rm(bureau)
@@ -338,7 +341,7 @@ categorical_list = c("NAME_CONTRACT_TYPE", "WEEKDAY_APPR_PROCESS_START", "NAME_C
                     "NAME_PAYMENT_TYPE", "CODE_REJECT_REASON", "NAME_TYPE_SUITE", "NAME_CLIENT_TYPE", "NAME_GOODS_CATEGORY",
                     "NAME_PRODUCT_TYPE", "CHANNEL_TYPE", "NAME_SELLER_INDUSTRY", "NAME_YIELD_GROUP", "PRODUCT_COMBINATION")
 
-prev_app_categorical_count = count_categorical_list(previous_application, categorical_list)
+prev_app_categorical_count = count_categorical_list(previous_application, categorical_list,"_prev_app")
 
 previous_application_features = c(previous_application_features, prev_app_categorical_count)
 
@@ -470,22 +473,25 @@ train_out = train_out %>%
 test_out = test_out %>%
 	select(final_test_cols)
 
-print(train_out %>% dim())
-print(test_out %>% dim())
 
 train_cols_last_check = train_out %>% colnames()
 test_cols_last_check = test_out %>% colnames()
 
+print("Train columns not in test:")
 print(train_cols_last_check[!(train_cols_last_check %in% test_cols_last_check)])
 
+print("Test columns not in train:")
 print(test_cols_last_check[!(test_cols_last_check %in% train_cols_last_check)])
 
-
+print("Writing column list")
+column_frame = train_out %>% colnames() %>% data.frame()
+write.csv(column_frame, "train_column_list.csv")
 
 
 ######################################
 #############write csvs###############
 ######################################
+print("Writing out datasets")
 write.csv(train_out, "train_modified.csv")
 write.csv(test_out, "test_modified.csv")
 print("Process complete")
