@@ -1,7 +1,7 @@
 # Data processing script
 # 
 # assign working directory path
-wd.path <- "/home/matia_alexander/data/home-credit-default-risk"
+wd.path <- "/home/matia_alexander/data/"
 setwd(wd.path)
 set.seed(1234)
 library(dplyr)
@@ -88,7 +88,7 @@ modeDatatst.tst <- imputationFunction(imputeToData = test, imputeFromData = test
                                   , missingCols = missingCols, suffix = '.tstmode')
 
 
-weights <- read.csv('/home/matia_alexander/data/home-credit-default-risk/modified/Training_Weight_V1.csv') %>% select(-X)
+weights <- read.csv('/home/matia_alexander/data/modified/Training_Weight_V1.csv') %>% select(-X)
 print("Weights loaded")
 
 train <- cbind(train, meanDatatr, medianDatatr, modeDatatr,
@@ -123,11 +123,11 @@ train_cols_not_test = train_cols[!(train_cols %in% test_cols)]
 test_cols_not_train = test_cols[!(test_cols %in% train_cols)]
 
 if(length(train_cols_not_test) > 0){
-	error(paste0("train contains columns not found in test: ", train_cols_not_test))
+	stop(paste0("train contains columns not found in test: ", train_cols_not_test))
 }
 
 if(length(test_cols_not_train) > 0){
-	error(paste0("test contains columns not found in train: ", test_cols_not_train))
+	stop(paste0("test contains columns not found in train: ", test_cols_not_train))
 }
 
 ###########################################
