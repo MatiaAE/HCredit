@@ -1,7 +1,7 @@
 # Data processing script
 # 
 # assign working directory path
-wd.path <- "C:\\Users\\amatia\\Desktop\\Projects\\Kaggle\\HomeCredit\\Data"
+wd.path <- "/home/matia_alexander/data/home-credit-default-risk"
 setwd(wd.path)
 set.seed(1234)
 library(dplyr)
@@ -47,6 +47,7 @@ imputationFunction <- function(imputeToData, imputeFromData, FUN, missingCols, s
   return(imputeToData)
 }
 
+#train imputation
 meanDatatr <- imputationFunction(imputeToData = train, imputeFromData = train, FUN = mean
                                  , missingCols = missingCols, suffix = '.trmean')
 
@@ -56,6 +57,16 @@ medianDatatr <- imputationFunction(imputeToData = train, imputeFromData = train,
 modeDatatr <- imputationFunction(imputeToData = train, imputeFromData = train, FUN = Mode
                                  , missingCols = missingCols, suffix = '.trmode')
 
+meanDatatr.tst <- imputationFunction(imputeToData = train, imputeFromData = test, FUN = mean
+                                 , missingCols = missingCols, suffix = '.tstmean')
+
+medianDatatr.tst <- imputationFunction(imputeToData = train, imputeFromData = test, FUN = median
+                                   , missingCols = missingCols, suffix = '.tstmedian')
+
+modeDatatr.tst <- imputationFunction(imputeToData = train, imputeFromData = test, FUN = Mode
+                                 , missingCols = missingCols, suffix = '.tstmode')
+
+#test imputation
 
 meanDatatst <- imputationFunction(imputeToData = test, imputeFromData = train, FUN = mean
                                   , missingCols = missingCols, suffix = '.trmean')
@@ -66,21 +77,58 @@ medianDatatst <- imputationFunction(imputeToData = test, imputeFromData = train,
 modeDatatst <- imputationFunction(imputeToData = test, imputeFromData = train, FUN = Mode
                                   , missingCols = missingCols, suffix = '.trmode')
 
-weights <- read.csv('Training_Weight_V1.csv') %>% select(-X)
 
-train <- cbind(train, meanDatatr, medianDatatr, modeDatatr) %>% left_join(weights)
+meanDatatst.tst <- imputationFunction(imputeToData = test, imputeFromData = test, FUN = mean
+                                  , missingCols = missingCols, suffix = '.tstmean')
 
-rm(meanDatatr, medianDatatr, modeDatatr, weights)
+medianDatatst.tst <- imputationFunction(imputeToData = test, imputeFromData = test, FUN = median
+                                    , missingCols = missingCols, suffix = '.tstmedian')
 
-test <- cbind(test, meanDatatst, medianDatatst, modeDatatst) 
+modeDatatst.tst <- imputationFunction(imputeToData = test, imputeFromData = test, FUN = Mode
+                                  , missingCols = missingCols, suffix = '.tstmode')
 
-rm(meanDatatst, medianDatatst, modeDatatst)
+
+weights <- read.csv('/home/matia_alexander/data/home-credit-default-risk/modified/Training_Weight_V1.csv') %>% select(-X)
+print("Weights loaded")
+
+train <- cbind(train, meanDatatr, medianDatatr, modeDatatr,
+	       meanDatatr.tst, medianDatatr.tst, modeDatatr.tst) %>% 
+		left_join(weights, by = "SK_ID_CURR")
+
+rm(meanDatatr, medianDatatr, modeDatatr, weights,
+	       meanDatatr.tst, medianDatatr.tst, modeDatatr.tst)
+
+test <- cbind(test, meanDatatst, medianDatatst, modeDatatst,
+	       meanDatatst.tst, medianDatatst.tst, modeDatatst.tst) 
+
+rm(meanDatatst, medianDatatst, modeDatatst,
+    meanDatatst.tst, medianDatatst.tst, modeDatatst.tst)
 
 # add variable specific imputation
 # add cross validation - 
 
 train$fold <- caret::createFolds(train$TARGET, 5, FALSE)
 
+
+#Check column composition of train and test:
+train_cols = train %>% colnames()
+test_cols = test %>% colnames()
+
+if(sum(c("TARGET", "fold", "Weights") %in% train_cols) != 3){
+	stop("train data missing one of: TARGET, fold, Weights")
+}
+
+train_cols = train_cols[!train_cols %in% c("TARGET","fold","Weights")]
+train_cols_not_test = train_cols[!(train_cols %in% test_cols)]
+test_cols_not_train = test_cols[!(test_cols %in% train_cols)]
+
+if(length(train_cols_not_test) > 0){
+	error(paste0("train contains columns not found in test: ", train_cols_not_test))
+}
+
+if(length(test_cols_not_train) > 0){
+	error(paste0("test contains columns not found in train: ", test_cols_not_train))
+}
 
 ###########################################
 #############Processing Functions##########
@@ -288,8 +336,7 @@ previous_application_features[["record_count"]] = previous_application_record_co
 
 categorical_list = c("NAME_CONTRACT_TYPE", "WEEKDAY_APPR_PROCESS_START", "NAME_CASH_LOAN_PURPOSE", "NAME_CONTRACT_STATUS",
                     "NAME_PAYMENT_TYPE", "CODE_REJECT_REASON", "NAME_TYPE_SUITE", "NAME_CLIENT_TYPE", "NAME_GOODS_CATEGORY",
-                    "NAME_PRODUCT_TYPE", "CHANNEL_TYPE", "NAME_SELLER_INDUSTRY", "NAME_YIELD_GROUP", "PRODUCT_COMBINATION",
-                    "Delta_Credit")
+                    "NAME_PRODUCT_TYPE", "CHANNEL_TYPE", "NAME_SELLER_INDUSTRY", "NAME_YIELD_GROUP", "PRODUCT_COMBINATION")
 
 prev_app_categorical_count = count_categorical_list(previous_application, categorical_list)
 
@@ -304,7 +351,7 @@ numerical_list = c("AMT_ANNUITY", "AMT_APPLICATION", "AMT_CREDIT", "AMT_DOWN_PAY
                    "AMT_GOODS_PRICE", "RATE_DOWN_PAYMENT", "RATE_INTEREST_PRIMARY",
                    "RATE_INTEREST_PRIVILEGED", "DAYS_DECISION", "SELLERPLACE_AREA",
                    "CNT_PAYMENT", "DAYS_FIRST_DRAWING", "DAYS_FIRST_DUE", "DAYS_LAST_DUE_1ST_VERSION",
-                   "DAYS_LAST_DUE", "DAYS_TERMINATION")
+                   "DAYS_LAST_DUE", "DAYS_TERMINATION", "Delta_Credit")
 
 
 prev_app_numerical_stats = basic_stats_agg_list(previous_application, numerical_list, "_prev_app")
@@ -389,7 +436,56 @@ test_out =
   left_join(test_IDs_Joined, by = "SK_ID_CURR")
 dim(test_out)
 
+
+
+#Check column composition of train and test:
+train_cols = train_out %>% colnames()
+test_cols = test_out %>% colnames()
+
+if(sum(c("TARGET", "fold", "Weights") %in% train_cols) != 3){
+	stop("train data missing one of: TARGET, fold, Weights")
+}
+
+train_cols = train_cols[!train_cols %in% c("TARGET","fold","Weights")]
+train_cols_not_test = train_cols[!(train_cols %in% test_cols)]
+test_cols_not_train = test_cols[!(test_cols %in% train_cols)]
+
+if(length(train_cols_not_test) > 0){
+	paste0("train contains columns not found in test: ", train_cols_not_test)
+}
+
+if(length(test_cols_not_train) > 0){
+	paste0("test contains columns not found in train: ", test_cols_not_train)
+}
+
+
+final_train_cols = train_cols[!(train_cols %in% train_cols_not_test)]
+final_train_cols = c("TARGET", "fold", "Weights", final_train_cols)
+
+final_test_cols = test_cols[!(test_cols %in% test_cols_not_train)]
+
+train_out = train_out %>%
+	select(final_train_cols)
+
+test_out = test_out %>%
+	select(final_test_cols)
+
+print(train_out %>% dim())
+print(test_out %>% dim())
+
+train_cols_last_check = train_out %>% colnames()
+test_cols_last_check = test_out %>% colnames()
+
+print(train_cols_last_check[!(train_cols_last_check %in% test_cols_last_check)])
+
+print(test_cols_last_check[!(test_cols_last_check %in% train_cols_last_check)])
+
+
+
+
 ######################################
 #############write csvs###############
 ######################################
-
+write.csv(train_out, "train_modified.csv")
+write.csv(test_out, "test_modified.csv")
+print("Process complete")
