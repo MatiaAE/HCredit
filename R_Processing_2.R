@@ -1,7 +1,7 @@
 # Data processing script
 # 
 # assign working directory path
-wd.path <- "/home/matia_alexander/data/"
+wd.path <- "/home/alex/Downloads/kaggle_data/"
 setwd(wd.path)
 set.seed(1234)
 library(dplyr)
@@ -88,7 +88,7 @@ modeDatatst.tst <- imputationFunction(imputeToData = test, imputeFromData = test
                                   , missingCols = missingCols, suffix = '.tstmode')
 
 
-weights <- read.csv('/home/matia_alexander/data/modified/Training_Weight_V1.csv') %>% select(-X)
+weights <- read.csv('/home/alex/kaggle_misc/Train_Weights_V2.csv') %>% select(-X)
 print("Weights loaded")
 
 #train <- cbind(train, meanDatatr, medianDatatr, modeDatatr,
@@ -197,6 +197,14 @@ basic_stats_agg_list <- function(dt, field_list, suffix){
 
 train_IDs = data.frame('SK_ID_CURR' = train$SK_ID_CURR)
 test_IDs = data.frame('SK_ID_CURR' = test$SK_ID_CURR)
+
+
+###########################################
+#############Engineered############
+###########################################
+
+
+
 
 
 ###########################################
@@ -313,7 +321,257 @@ amt_overdue_buckets_bureau =
 bureau_features = c(bureau_features, list(amt_od_buckets = amt_overdue_buckets_bureau))
 
 
-rm(bureau)
+####################################
+###########Join in bureau features##
+####################################
+print("Joining in bureau features")
+
+train_IDs_Joined = train_IDs
+test_IDs_Joined = test_IDs
+
+for(i in names(bureau_features)){
+  train_IDs_Joined = 
+    train_IDs_Joined %>% 
+    left_join(bureau_features[[i]], by = "SK_ID_CURR")
+  
+  test_IDs_Joined = 
+    test_IDs_Joined %>% 
+    left_join(bureau_features[[i]], by = "SK_ID_CURR")
+}
+
+if(dim(train_IDs)[1] != dim(train_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (bureau:train)")
+}
+
+if(dim(test_IDs)[1] != dim(test_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (bureau:test)")
+}
+
+rm(bureau_features); gc()
+
+###########################################
+#############Process bureau_balance.csv###########
+###########################################
+id_crosswalk = bureau %>% select(SK_ID_CURR, SK_ID_BUREAU)
+
+bureau_balance_features = list()
+bbalance = read.csv("bureau_balance.csv")
+
+#count number & proportion of each status for each id
+
+
+b_balance_status_overall_base = 
+  id_crosswalk %>% 
+  left_join(bbalance, by = 'SK_ID_BUREAU') %>% 
+  group_by(SK_ID_CURR, STATUS) %>% 
+  summarise(STATUS_count_bbalance = n()) %>% 
+  group_by(SK_ID_CURR) %>% 
+  mutate(record_count_bbureau = sum(STATUS_count_bbalance)) %>% 
+  ungroup() %>% 
+  mutate(STATUS_overall_proportion_bbureau = STATUS_count_bbalance / record_count_bbureau) 
+
+b_balance_status_overall_count = b_balance_status_overall_base %>% 
+  mutate(STATUS = gsub(STATUS, pattern = " ", replacement = "") ) %>% 
+  mutate(STATUS = paste0(STATUS,"_count_bbalance" )) %>% 
+  dcast(SK_ID_CURR~STATUS, fill = 0, value.var = "STATUS_count_bbalance")
+  
+bureau_balance_features = c(bureau_balance_features, list(bureau_balance_status_count = b_balance_status_overall_count))
+
+b_balance_status_overall_proportion = b_balance_status_overall_base %>% 
+  mutate(STATUS = gsub(STATUS, pattern = " ", replacement = "") ) %>% 
+  mutate(STATUS = paste0(STATUS,"_proportion_bbalance" )) %>% 
+  dcast(SK_ID_CURR~STATUS, fill = 0, value.var = "STATUS_overall_proportion_bbureau")
+
+bureau_balance_features = c(bureau_balance_features, list(bureau_balance_status_overall_proportion = b_balance_status_overall_proportion))
+
+#count time since statuses 1-5
+
+
+bbalance_time_since_status = 
+  id_crosswalk %>% 
+  inner_join(bbalance, by = "SK_ID_BUREAU") %>% 
+  group_by(SK_ID_CURR, STATUS) %>% 
+  summarise(min_time = max(MONTHS_BALANCE, na.rm = T)) %>% 
+  ungroup() %>% 
+  mutate(STATUS = paste0("Time_Since_Status_",STATUS,"_bbalance")) %>% 
+  dcast(SK_ID_CURR~STATUS, value.var = "min_time")
+
+bureau_balance_features = c(bureau_balance_features, list(bureau_balance_time_since_status = bbalance_time_since_status) )
+
+##############################################
+##########Join in bureau_balance features#####
+##############################################
+print("Joining in bureau_balance features")
+
+for(i in names(bureau_balance_features)){
+  train_IDs_Joined =
+    train_IDs_Joined %>% 
+    left_join(bureau_balance_features[[i]], by = 'SK_ID_CURR')
+  
+  test_IDs_Joined = 
+    test_IDs_Joined %>% 
+    left_join(bureau_balance_features[[i]], by = 'SK_ID_CURR')
+}
+
+if(dim(train_IDs)[1] != dim(train_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (bureau_balance:train)")
+}
+
+if(dim(test_IDs)[1] != dim(test_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (bureau_balance:test)")
+}
+
+
+
+
+
+  #average record count of credit
+  #overall proportion within each status
+rm(bbalance); gc()
+rm(bureau); gc()
+rm(bureau_balance_features); gc()
+
+##################################################################################################################
+############################################Process POS_CASH_balance.csv##########################################
+##################################################################################################################
+POS_CASH_features = list()
+p_cash_balance = read.csv('POS_CASH_balance.csv')
+
+
+#Engineered
+
+
+#count of completed
+
+p_cash_balance_completed_count = p_cash_balance %>% 
+  filter(NAME_CONTRACT_STATUS == "Completed") %>% 
+  group_by(SK_ID_CURR) %>% 
+  summarise(Completed_Count_POS_CASH = n())
+
+POS_CASH_features = c(POS_CASH_features, list(POS_CASH_Completed_Count = p_cash_balance_completed_count))
+
+#count of current active
+p_cash_balance_current_active_count = p_cash_balance %>% 
+  filter(MONTHS_BALANCE == -1) %>% 
+  filter(NAME_CONTRACT_STATUS == "Active") %>% 
+  group_by(SK_ID_CURR) %>% 
+  summarise(Current_Active_Count_POS_CASH = n())
+
+POS_CASH_features = c(POS_CASH_features, list(POS_CASH_current_active_Count = p_cash_balance_current_active_count))
+#count of dpd loans in borrower's history
+p_cash_balance_max_dpd = p_cash_balance %>% 
+  group_by(SK_ID_PREV, SK_ID_CURR) %>% 
+  summarise(max_dpd = max(SK_DPD)) %>% ungroup() %>% 
+  mutate(DQ_Flag = ifelse(max_dpd > 0, 1, 0) ) %>% 
+  group_by(SK_ID_CURR) %>% 
+  summarise(Ever_DPD_Count_POS_CASH = sum(DQ_Flag))
+
+POS_CASH_features = c(POS_CASH_features, list(POS_CASH_Ever_Dpd_count = p_cash_balance_max_dpd))
+
+#loan term statistics
+p_cash_balance_CNT_INSTALLMENT = 
+  p_cash_balance %>% 
+  group_by(SK_ID_CURR, SK_ID_PREV) %>% 
+  summarise(CNT_INSTALLMENT_MODE = Mode(CNT_INSTALMENT, na.rm=T))
+
+p_cash_balance_CNT_INSTALLMENT_MODE_Statistics = basic_stats_agg(dt = p_cash_balance_CNT_INSTALLMENT,field =  "CNT_INSTALLMENT_MODE", suffix = "_POS_CASH")
+
+POS_CASH_features = c(POS_CASH_features, list(CNT_INSTALLMENT_MODE_Statistics = p_cash_balance_CNT_INSTALLMENT_MODE_Statistics)) 
+
+#apply many possible numerical mappings SK_ID_PREV -> SK_ID_CURR then compute statistics
+FZ = funs(mean, sd, median, Mode, min, max, sum, n_distinct, .args = list(na.rm=TRUE))
+print("POS_CASH:  Performing 2-way aggregations: monthly data -> SK_ID_PREV -> SK_ID_CURR")
+print("This may take some time...")
+p_cash_balance_nMap = 
+  p_cash_balance %>% 
+  mutate_if(is.character, funs(factor(.) %>% as.integer) ) %>% 
+  mutate_if(is.factor, as.integer) %>%
+  group_by(SK_ID_PREV, SK_ID_CURR) %>% 
+  summarise_all(FZ) %>% 
+  ungroup() %>% 
+  select(-SK_ID_PREV) %>% 
+  group_by(SK_ID_CURR) %>% 
+  summarise_all(FZ) %>% 
+  rename_at(vars(-SK_ID_CURR), ~paste0(., "_POS_CASH"))
+
+POS_CASH_features = c(POS_CASH_features, list(cash_balance_nMap = p_cash_balance_nMap)) 
+
+
+
+##################################################
+###########Join in POS_CASH features##############
+##################################################
+print("Joining in POS_CASH features")
+for(i in names(POS_CASH_features)){
+  train_IDs_Joined = 
+    train_IDs_Joined %>% 
+    left_join(POS_CASH_features[[i]], by = "SK_ID_CURR")
+  
+  test_IDs_Joined = 
+    test_IDs_Joined %>% 
+    left_join(POS_CASH_features[[i]], by = "SK_ID_CURR")
+}
+
+if(dim(train_IDs)[1] != dim(train_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (POS_CASH:train)")
+}
+
+if(dim(test_IDs)[1] != dim(test_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (POS_CASH:test)")
+}
+rm(p_cash_balance); gc()
+rm(POS_CASH_features); gc()
+
+#########################################################
+#############Process credit_card_balance.csv############
+#########################################################
+credit_card_balance_features = list()
+credit_card = read.csv('credit_card_balance.csv')
+
+
+#Double-aggregation statistics:
+FZ = funs(mean, sd, median, Mode, min, max, sum, n_distinct, .args = list(na.rm=TRUE))
+print("credit_card_balance:  Performing 2-way aggregations: monthly data -> SK_ID_PREV -> SK_ID_CURR")
+print("This may take some time...")
+credit_card_balance_nMap = 
+  credit_card %>% 
+  mutate_if(is.character, funs(factor(.) %>% as.integer) ) %>% 
+  mutate_if(is.factor, as.integer) %>%
+  group_by(SK_ID_PREV, SK_ID_CURR) %>% 
+  summarise_all(FZ) %>% 
+  ungroup() %>% 
+  select(-SK_ID_PREV) %>% 
+  group_by(SK_ID_CURR) %>% 
+  summarise_all(FZ) %>% 
+  rename_at(vars(-SK_ID_CURR), ~paste0(., "_credit_card_balance"))
+
+credit_card_balance_features = c(credit_card_balance_features, list(credit_card_nMap = credit_card_balance_features)) 
+
+
+##################################################
+###########Join in credit_card_balance features##
+##################################################
+print("Joining in credit_card_balance features")
+for(i in names(credit_card_balance_features)){
+  train_IDs_Joined = 
+    train_IDs_Joined %>% 
+    left_join(credit_card_balance_features[[i]], by = "SK_ID_CURR")
+  
+  test_IDs_Joined = 
+    test_IDs_Joined %>% 
+    left_join(credit_card_balance_features[[i]], by = "SK_ID_CURR")
+}
+
+if(dim(train_IDs)[1] != dim(train_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (credit_card_balance:train)")
+}
+
+if(dim(test_IDs)[1] != dim(test_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (credit_card_balance:test)")
+}
+
+rm(credit_card); gc()
+rm(credit_card_balance_features); gc()
 
 
 
@@ -365,46 +623,10 @@ previous_application_features = c(previous_application_features, prev_app_numeri
 ############Engineered#########
 ###############################
 
-
-
-
-
-
-
-######################################
-#############Combine Features#########
-######################################
-
-####################################
-###########Join in bureau features##
-####################################
-
-
-train_IDs_Joined = train_IDs
-test_IDs_Joined = test_IDs
-
-for(i in names(bureau_features)){
-  train_IDs_Joined = 
-    train_IDs_Joined %>% 
-    left_join(bureau_features[[i]], by = "SK_ID_CURR")
-  
-  test_IDs_Joined = 
-    test_IDs_Joined %>% 
-    left_join(bureau_features[[i]], by = "SK_ID_CURR")
-}
-
-if(dim(train_IDs)[1] != dim(train_IDs_Joined)[1]){
-  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (bureau:train)")
-}
-
-if(dim(test_IDs)[1] != dim(test_IDs_Joined)[1]){
-  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (bureau:test)")
-}
-
 ##################################################
 ###########Join in previous_application features##
 ##################################################
-
+print("Joining in previous_application features")
 for(i in names(previous_application_features)){
   train_IDs_Joined = 
     train_IDs_Joined %>% 
@@ -422,6 +644,23 @@ if(dim(train_IDs)[1] != dim(train_IDs_Joined)[1]){
 if(dim(test_IDs)[1] != dim(test_IDs_Joined)[1]){
   stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (previous_application:test)")
 }
+
+rm(previous_application); gc()
+rm(previous_application_features)
+
+
+
+######################################
+#############Combine Features#########
+######################################
+
+
+
+
+####################################################
+#####################Final integrity checks#########
+####################################################
+
 
 
 
