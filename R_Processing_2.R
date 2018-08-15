@@ -198,17 +198,116 @@ basic_stats_agg_list <- function(dt, field_list, suffix){
 train_IDs = data.frame('SK_ID_CURR' = train$SK_ID_CURR)
 test_IDs = data.frame('SK_ID_CURR' = test$SK_ID_CURR)
 
+###########################################
+#############Process application.csv############
+###########################################
+application_features = list()
+train = train %>% select(-TARGET)
+
+application = rbind(train,test)
+
+
+tidy_xgb_features = application %>% 
+  mutate_if(is.character, funs(factor(.) %>% as.integer) ) %>% 
+  mutate(na = apply(., 1, function(x) sum(is.na(x))),
+         DAYS_EMPLOYED = ifelse(DAYS_EMPLOYED == 365243, NA, DAYS_EMPLOYED),
+         DAYS_EMPLOYED_PERC = sqrt(DAYS_EMPLOYED / DAYS_BIRTH),
+         INCOME_CREDIT_PERC = AMT_INCOME_TOTAL / AMT_CREDIT,
+         INCOME_PER_PERSON = log1p(AMT_INCOME_TOTAL / CNT_FAM_MEMBERS),
+         ANNUITY_INCOME_PERC = sqrt(AMT_ANNUITY / (1 + AMT_INCOME_TOTAL)),
+         LOAN_INCOME_RATIO = AMT_CREDIT / AMT_INCOME_TOTAL,
+         ANNUITY_LENGTH = AMT_CREDIT / AMT_ANNUITY,
+         CHILDREN_RATIO = CNT_CHILDREN / CNT_FAM_MEMBERS, 
+         CREDIT_TO_GOODS_RATIO = AMT_CREDIT / AMT_GOODS_PRICE,
+         INC_PER_CHLD = AMT_INCOME_TOTAL / (1 + CNT_CHILDREN),
+         SOURCES_PROD = EXT_SOURCE_1 * EXT_SOURCE_2 * EXT_SOURCE_3,
+         CAR_TO_BIRTH_RATIO = OWN_CAR_AGE / DAYS_BIRTH,
+         CAR_TO_EMPLOY_RATIO = OWN_CAR_AGE / DAYS_EMPLOYED,
+         PHONE_TO_BIRTH_RATIO = DAYS_LAST_PHONE_CHANGE / DAYS_BIRTH,
+         PHONE_TO_EMPLOY_RATIO = DAYS_LAST_PHONE_CHANGE / DAYS_EMPLOYED) %>% 
+  select(SK_ID_CURR, na, DAYS_EMPLOYED, DAYS_EMPLOYED_PERC, INCOME_CREDIT_PERC, INCOME_PER_PERSON, ANNUITY_INCOME_PERC,
+         LOAN_INCOME_RATIO, ANNUITY_LENGTH, CHILDREN_RATIO, CREDIT_TO_GOODS_RATIO, INC_PER_CHLD, SOURCES_PROD, CAR_TO_BIRTH_RATIO,
+         CAR_TO_EMPLOY_RATIO, PHONE_TO_BIRTH_RATIO, PHONE_TO_EMPLOY_RATIO)
+
+
+application_features[['borrowed_tidy_xgb_features']] = tidy_xgb_features
+
+col_list = c(
+  'CNT_CHILDREN',
+  'AMT_INCOME_TOTAL',
+  'AMT_CREDIT',
+  'AMT_ANNUITY',
+  'AMT_GOODS_PRICE',
+  'DAYS_BIRTH',
+  'DAYS_EMPLOYED',
+  'DAYS_REGISTRATION',
+  'DAYS_ID_PUBLISH',
+  'OWN_CAR_AGE',
+  'CNT_FAM_MEMBERS',
+  'EXT_SOURCE_1',
+  'EXT_SOURCE_2',
+  'EXT_SOURCE_3',
+  'APARTMENTS_AVG',
+  'OBS_30_CNT_SOCIAL_CIRCLE',
+  'DEF_30_CNT_SOCIAL_CIRCLE',
+  'OBS_60_CNT_SOCIAL_CIRCLE',
+  'DAYS_LAST_PHONE_CHANGE',
+  'AMT_REQ_CREDIT_BUREAU_MON',
+  'AMT_REQ_CREDIT_BUREAU_QRT',
+  'AMT_REQ_CREDIT_BUREAU_YEAR')
+
+
+
+for(i in col_list){
+  for(j in col_list){
+    if(i != j){
+      print(i)
+      tmp = application %>% select('SK_ID_CURR', i, j)
+      tmp[[paste0(i,'_',j,'_ratio_application')]] = application[[i]] / application[[j]]
+      tmp = tmp %>% select(-i, -j)
+      application_features[[paste0(i,'_',j)]] = tmp
+    }
+  }
+}
+
+
+
+####################################
+###########Join in application features##
+####################################
+print("Joining in application features")
+
+train_IDs_Joined = train_IDs
+test_IDs_Joined = test_IDs
+
+for(i in names(application_features)){
+  train_IDs_Joined = 
+    train_IDs_Joined %>% 
+    left_join(application_features[[i]], by = "SK_ID_CURR")
+  
+  test_IDs_Joined = 
+    test_IDs_Joined %>% 
+    left_join(application_features[[i]], by = "SK_ID_CURR")
+}
+
+if(dim(train_IDs)[1] != dim(train_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (application:train)")
+}
+
+if(dim(test_IDs)[1] != dim(test_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (application:test)")
+}
+
+rm(application_features); gc()
+rm(application); gc()
+
+
+
+
+
 
 ###########################################
-#############Engineered############
-###########################################
-
-
-
-
-
-###########################################
-#############Process bureau.csv############
+#############Process bureau############
 ###########################################
 bureau_features = list()
 bureau = read.csv('bureau.csv')
@@ -545,7 +644,7 @@ credit_card_balance_nMap =
   summarise_all(FZ) %>% 
   rename_at(vars(-SK_ID_CURR), ~paste0(., "_credit_card_balance"))
 
-credit_card_balance_features = c(credit_card_balance_features, list(credit_card_nMap = credit_card_balance_features)) 
+credit_card_balance_features = c(credit_card_balance_features, list(credit_card_nMap = credit_card_balance_nMap)) 
 
 
 ##################################################
