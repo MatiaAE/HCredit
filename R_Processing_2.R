@@ -199,6 +199,83 @@ train_IDs = data.frame('SK_ID_CURR' = train$SK_ID_CURR)
 test_IDs = data.frame('SK_ID_CURR' = test$SK_ID_CURR)
 
 ###########################################
+#############Process insallment_payments.csv############
+###########################################
+installments = read.csv('installments_payments.csv')
+installments_features = list()
+
+installments = installments %>% 
+  arrange(SK_ID_CURR, SK_ID_PREV, NUM_INSTALMENT_VERSION, NUM_INSTALMENT_NUMBER) %>% 
+  mutate(Payment_Diff_installments = AMT_INSTALMENT - AMT_PAYMENT) %>% 
+  mutate(Day_Diff_installments = DAYS_INSTALMENT - DAYS_ENTRY_PAYMENT)
+  
+FZ = funs(mean, sd, median, Mode, min, max, sum, n_distinct, .args = list(na.rm=TRUE))
+print("installment payments:  Performing 2-way aggregations: monthly data -> SK_ID_PREV -> SK_ID_CURR")
+print("This may take some time...")
+
+installments_double_map_features = 
+  installments %>% 
+  group_by(SK_ID_CURR, SK_ID_PREV) %>% 
+  summarise_all(FZ) %>% 
+  ungroup() %>% 
+  select(-SK_ID_PREV) %>% 
+  group_by(SK_ID_CURR) %>% 
+  summarise_all(FZ) %>% 
+  rename_at(vars(-SK_ID_CURR), ~paste0(., "_installments_payments"))
+  
+  
+  
+FZ = funs(mean, sd, median, Mode, min, max, sum, n_distinct, .args = list(na.rm=TRUE))
+print("credit_card_balance:  Performing 2-way aggregations: monthly data -> SK_ID_PREV -> SK_ID_CURR")
+print("This may take some time...")
+credit_card_balance_nMap = 
+  credit_card %>% 
+  mutate_if(is.character, funs(factor(.) %>% as.integer) ) %>% 
+  mutate_if(is.factor, as.integer) %>%
+  group_by(SK_ID_PREV, SK_ID_CURR) %>% 
+  summarise_all(FZ) %>% 
+  ungroup() %>% 
+  select(-SK_ID_PREV) %>% 
+  group_by(SK_ID_CURR) %>% 
+  summarise_all(FZ) %>% 
+  rename_at(vars(-SK_ID_CURR), ~paste0(., "_credit_card_balance"))
+  
+
+
+installments_features[['Double_Agg']] = credit_card_balance_nMap
+
+
+####################################
+###########Join in installment features##
+####################################
+print("Joining in installment features")
+
+train_IDs_Joined = train_IDs
+test_IDs_Joined = test_IDs
+
+for(i in names(installments_features)){
+  train_IDs_Joined = 
+    train_IDs_Joined %>% 
+    left_join(installments_features[[i]], by = "SK_ID_CURR")
+  
+  test_IDs_Joined = 
+    test_IDs_Joined %>% 
+    left_join(installments_features[[i]], by = "SK_ID_CURR")
+}
+
+if(dim(train_IDs)[1] != dim(train_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (installments:train)")
+}
+
+if(dim(test_IDs)[1] != dim(test_IDs_Joined)[1]){
+  stop("DUPLICATE RECORDS RESULTING FROM BAD JOIN IN Combine Features STEP (installments:test)")
+}
+
+rm(installments_features); gc()
+rm(installments); gc()
+
+
+###########################################
 #############Process application.csv############
 ###########################################
 application_features = list()
@@ -207,6 +284,13 @@ train = train %>% select(-TARGET)
 application = rbind(train,test)
 
 
+
+
+#############################################
+######################Engineered#############
+#############################################
+
+#borrowed from tidyxgb code on kaggle kernels
 tidy_xgb_features = application %>% 
   mutate_if(is.character, funs(factor(.) %>% as.integer) ) %>% 
   mutate(na = apply(., 1, function(x) sum(is.na(x))),
@@ -232,6 +316,8 @@ tidy_xgb_features = application %>%
 
 application_features[['borrowed_tidy_xgb_features']] = tidy_xgb_features
 
+
+#Take all ratios that may be relevant
 col_list = c(
   'CNT_CHILDREN',
   'AMT_INCOME_TOTAL',
@@ -270,15 +356,52 @@ for(i in col_list){
   }
 }
 
+#count of documents provided
+
+FLAG_COLS = application %>% colnames() %>% grep(pattern = "FLAG_DOCUMENT_(.*)", value = TRUE) %>% unlist()
 
 
+Doc_Count = application %>% 
+  select(c('SK_ID_CURR', FLAG_COLS)) %>% 
+  mutate(Document_Count_application = apply( application[, FLAG_COLS], 1, sum ) ) %>% 
+  select(-FLAG_COLS)
+
+application_features[['doc_cnt']] = Doc_Count
+
+#Count of region mis-match
+ADDRESS_FLAGS = c(
+'REG_REGION_NOT_LIVE_REGION',
+'REG_REGION_NOT_WORK_REGION',
+'LIVE_REGION_NOT_WORK_REGION',
+'REG_CITY_NOT_LIVE_CITY',
+'REG_CITY_NOT_WORK_CITY',
+'LIVE_CITY_NOT_WORK_CITY')
+
+Reg_mismatch_count = application %>% 
+  select(c('SK_ID_CURR', ADDRESS_FLAGS)) %>% 
+  mutate(Reg_mismatch_count_application = apply(application[, ADDRESS_FLAGS], 1, sum) ) %>% 
+  select(-ADDRESS_FLAGS)
+
+application_features[['Reg_mismatch']] = Reg_mismatch_count
+
+#Score statistics
+SCORES = c('EXT_SOURCE_1', 'EXT_SOURCE_2', 'EXT_SOURCE_3')
+
+Score_analysis = application %>% 
+  select(c('SK_ID_CURR', SCORES)) %>% 
+  mutate(Avg_EXT_SOURCE_application = apply(application[, SCORES], 1, function(x) mean(x, na.rm=TRUE)) ) %>% 
+  mutate(SD_EXT_SOURCE_application = apply(application[, SCORES], 1, function(x) sd(x, na.rm=TRUE))  ) %>% 
+  mutate(EXT_SOURCE_missing_cnt_application = apply(application[, SCORES], 1, function(x) sum(is.na(x))) ) %>% 
+  mutate(EXT_SOURCE_max_application = apply(application[, SCORES], 1, function(x) max(x) ) ) %>% 
+  mutate(EXT_SOURCE_min_application = apply(application[, SCORES], 1, function(x) min(x) ) ) %>% 
+  mutate(EXT_SOURCE_range_application = ifelse(EXT_SOURCE_missing_cnt_application >=2, NA, EXT_SOURCE_max_application - EXT_SOURCE_min_application) )
+
+application_features[['Score_analysis']] = Score_analysis
 ####################################
 ###########Join in application features##
 ####################################
 print("Joining in application features")
 
-train_IDs_Joined = train_IDs
-test_IDs_Joined = test_IDs
 
 for(i in names(application_features)){
   train_IDs_Joined = 
@@ -425,8 +548,7 @@ bureau_features = c(bureau_features, list(amt_od_buckets = amt_overdue_buckets_b
 ####################################
 print("Joining in bureau features")
 
-train_IDs_Joined = train_IDs
-test_IDs_Joined = test_IDs
+
 
 for(i in names(bureau_features)){
   train_IDs_Joined = 
